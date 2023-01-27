@@ -1,0 +1,381 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Sun Jan 15 22:50:27 2023
+
+@author: irrikrlla
+This is a one-day bargain-hunting strategy with an 88% win rate in Chinese stock A market
+"""
+
+import itertools
+from multiprocessing import Pool, cpu_count,freeze_support
+import pandas as pd
+import os
+import talib
+import time
+import numpy as np
+from datetime import timedelta,date
+from datetime import datetime
+from decimal import Decimal, ROUND_HALF_UP
+import warnings
+import re
+def num_to_pct(value):
+    return '%.2f%%' % (value * 100)
+
+warnings.filterwarnings('ignore')
+
+start_time = datetime.now()
+
+date_start = '1991-01-01' # backtest start time
+date_end = '2022-12-31' # backtest end time
+
+#file path
+file path
+
+# index path
+
+SH000001 =
+
+
+def get_filelist(input_address):
+     os.chdir(input_address)
+     file_chdir = os. getcwd()
+     classify = []
+     folder = []
+     paths = []
+     for root, dirs, files in os. walk(file_chdir):
+         for file in files:
+             path.append(os.path.join(root,file))
+    
+     return list(set(path))
+
+path = get_filelist(file path)
+
+
+#rename
+SH000001 = SH000001. rename(columns = dict(zip( col_,'index_' +col_)))
+indexer = pd.api.indexers.FixedForwardWindowIndexer(window_size=1)
+
+   # Reverse rolling declaration variable
+# path = [tar+i+'.pkl' for i in stock_id if os.path.isfile(os.path.join(tar, i+'.pkl'))]
+
+event_list = ['event']
+stk_num_limit = 4
+
+c_rate = 2.5 / 10000 # handling fee
+t_rate = 1 / 1000 # stamp duty
+
+def merge_with_index_data(df, index_data):
+     """
+     Raw stock data has no data when it is not trading.
+     Combining the original stock data and index data can complete the date when the original stock data has no transactions.
+     :param df: stock data
+     :param index_data: index data
+     :return:
+     """
+
+     # === Merge the stock data and the Shanghai Composite Index, the results have been sorted
+     df = pd. merge(left=df, right=index_data, on='trade_date', how='right', sort=True, indicator=True)
+
+     # ===Complete the opening, high, closing, low, and previous closing prices
+     # Use the closing price of the previous day to fill in the empty value of the closing price
+     df['close'].fillna(method='ffill', inplace=True)
+     # Use the closing price to complete the empty values of the opening price, highest price, and low
+     df['open'].fillna(value=df['close'], inplace=True)
+     df['high'].fillna(value=df['close'], inplace=True)
+     df['low'].fillna(value=df['close'], inplace=True)
+     # Closing price before completion
+     df['pre_close'].fillna(value=df['close'].shift(1), inplace=True)
+
+     # === fill some columns of the stop time with 0
+    
+     fill_0_list = ['volume', 'amount', 'turnover_rate', 'pct_chg', 'pct_chg_opening']
+     df.loc[:, fill_0_list] = df[fill_0_list].fillna(value=0)
+
+     # === Use the data of the previous day to fill in the remaining empty values
+     df.fillna(method='ffill', inplace=True)
+
+     # ===Remove data before listing
+     df = df[df['code'].notnull()]
+
+     # ===Judging whether to calculate whether to trade on the day, 1--True,
+     df.loc[:,'is_trading'] = 1
+     df.loc[df['_merge'] == 'right_only', 'is_trading'] = 0
+     del df['_merge']
+
+     df.reset_index(drop=True, inplace=True)
+    
+     df.loc[:,'next_day_is_trading'] = df['is_trading'].shift(-1)
+    
+     df.loc[:,'next_day_is_st'] = df['isST'].shift(-1)
+     df.loc[:,'next_day_is_delist'] = df['is_delist'].shift(-1)
+     df.loc[:,'next_day_pct_chg_opening'] = df['pct_chg_opening'].shift(-1)
+    
+     return df
+
+
+def cal_rank_factor(df: pd. DataFrame, extra_cols: list):
+    
+    
+     df.loc[:,'rank_factor'] = df.close
+    
+     extra_cols.append('rank_factor')
+
+     return df, extra_cols
+
+
+
+
+def get_real_singal(df):
+
+            #2.Limited trading amount 
+     cond1 = ((df['amount']>= 8e8)&
+              (df['adj_close']>=1.05*df['adj_open'])&
+              (df['adj_close']<df['up_limit'])&
+              (df['price_percentage']<0.5)&
+              (df['volume'] > df['volume_ma_50']))
+            
+             # find MAs' support
+     cond2 = (
+    
+     ((df['adj_open'] > df['price_ma_8'])&
+     (df['adj_open'] <= df['price_ma_8']*1.03))|
+     ((df['adj_open'] > df['price_ma_13'])&
+     (df['adj_open'] <= df['price_ma_13']*1.03))|
+     ((df['adj_open'] > df['price_ma_21'])&
+     (df['adj_open'] <= df['price_ma_21']*1.03))|
+     ((df['adj_open'] > df['price_ma_30'])&
+     (df['adj_open'] <= df['price_ma_30']*1.03)))
+    # Long arrangement
+     cond3 = ((df['price_ma_5'] > df['price_ma_8'])
+     &(df['price_ma_8'] > df['price_ma_13'])
+     )
+     #Volume detection and market environment
+     # cond4 = (#Individual stock trading volume detection
+     # (df['volume'] > df['volume_ma_50'])&
+            
+     # (df['index_price_ma_5']>df['index_price_ma_7'])&
+     # (df['index_price_ma_7']>df['index_price_ma_10'])
+        
+     # )
+     df.loc[cond1&
+            cond2
+           
+           , 'event'] = 0
+     df.loc[
+             cond1&
+             cond3
+            
+           
+             , 'event'] = 1
+    
+    
+    
+     cond5 = (df['event'].shift(1)==1)|(df['event'].shift(1)==0)
+     cond6 = ((df['volume'] < df['volume'].shift(1))&
+            (df['adj_open'] >= df['adj_close'])
+            &(df['adj_close']>df['adj_low'].shift(1))
+            # &(df['volume'] > df['volume_ma_50'])
+            )
+     df.loc[cond5&cond6,'event']=2
+    
+     return df
+    
+df_list = []
+price_col = ['open', 'close', 'high', 'low', 'pre_close']
+
+def event_coll(arg):
+     name = re.search('(\w{2}\d{6})',arg)[0]
+
+     print(name)
+     df = pd.read_pickle(arg,compression='xz')
+        
+     df.loc[:,'trade_date'] = df['trade_date'].apply(lambda x:datetime.strptime(x.strftime('%Y%m%d'),'%Y%m%d') )
+     # Restoration price
+     adj_price = (df[price_col].T *df['adj_factor']).T / float(df['adj_factor'].iloc[-1])
+     df.loc[:,'adj_open'] = adj_price['open']
+     df.loc[:,'adj_close'] = adj_price['close']
+     df.loc[:,'adj_high'] = adj_price['high']
+     df.loc[:,'adj_low'] = adj_price['low']
+     df.loc[:,'adj_pre_close'] = adj_price['pre_close']
+    
+     st_index = df[df['is_st']==1].index
+     #up and down limit
+     df.loc[:,'up_limit'] = df['adj_pre_close']*1.1
+     df.loc[:,'down_limit'] = df['adj_pre_close']*0.9
+     df.loc[st_index,'up_limit'] = df['adj_pre_close']*1.05
+     df.loc[st_index,'down_limit'] = df['adj_pre_close']*0.95
+     df['price_percentage'] = (df['close']-df.low.min())/(df.high.max()-df.low.min())
+     # After August 3, 2020, the price limit rules have changed
+
+     # The new sci-tech innovation board
+     new_rule_kcb = (df['trade_date'] > pd.to_datetime('2020-08-03')) & df['code'].str.contains('sh68')
+     # The new GEM
+     new_rule_cyb = (df['trade_date'] > pd.to_datetime('2020-08-03')) & df['code'].str.contains('sz30')
+     # North Exchange Conditions
+    
+            
+     df.loc[new_rule_cyb|new_rule_kcb,'up_limit'] = df.loc[new_rule_cyb|new_rule_kcb,'adj_pre_close']*1.2
+     df.loc[new_rule_cyb|new_rule_kcb,'down_limit'] = df.loc[new_rule_cyb|new_rule_kcb,'adj_pre_close']*0.8
+
+    
+     df.loc[new_rule_cyb|new_rule_kcb,'up_limit'] = df.loc[new_rule_cyb|new_rule_kcb,'adj_pre_close']*1.2
+     df.loc[new_rule_cyb|new_rule_kcb,'down_limit'] = df.loc[new_rule_cyb|new_rule_kcb,'adj_pre_close']*0.8
+  
+     df.loc[:,'up_limit'] = df.loc[:,'up_limit'].apply(lambda x: float(Decimal(x * 100).quantize(Decimal('1'), rounding=ROUND_HALF_UP) / 100))
+     df.loc[:,'down_limit'] = df.loc[:,'down_limit'].apply(lambda x: float(Decimal(x * 100).quantize(Decimal('1'), rounding=ROUND_HALF_UP) / 100))
+
+     df = get_limits(df)
+     # df = merge_with_index_data(df, SH000001)
+     # df = embbi(df,malist=[2,3,5,8,13,21])
+     price_ma=[5,8,13,21,30]
+     # price_ma_index = [5,7,10]
+     df.loc[:,'volume_ma_50']= (df['volume'].rolling(50).mean()).fillna(value=0)
+     for _ in price_ma:
+         
+         df.loc[:,'price_ma_{}'.format(_)]= (df['adj_close'].rolling(_).mean()).fillna(value=0)
+     # for _ in price_ma_index:
+         
+     # df.loc[:,'index_price_ma_{}'.format(_)]= (df['index_close'].rolling(_).mean()).fillna(value=0)
+     df = merge_with_index_data(df, SH000001)
+     df.loc[:,'trade_date_count'] = df.index + 1
+     df.loc[:,'event_time'] = df['trade_date']
+    
+     df.loc[:,'max_pct_chg']=(df['high'].shift(-1)-df['close'])/df['close']
+    
+    
+     df = get_real_singal(df)
+     df.loc[:,'event_time'] = df['event_time']
+    
+     extra_cols = [] # The columns that need to be output are placed here
+     df, extra_cols = cal_rank_factor(df, extra_cols)
+    
+     #next_nday_pct_chg: the rise and fall of the next n days, pct_chg_opening: the rise and fall of the opening day
+     df['next_nday_pct_chg'] = [window.to_list() for window in df['max_pct_chg'].rolling(window=indexer, min_periods=1)]
+     # df['pct_chg_opening'] = df['pct_chg_opening'].apply(lambda x: [x])
+     # df['next_nday_pct_chg'] = df['next_nday_pct_chg'].apply(lambda x: x[1:])
+     # df['next_nday_pct_chg'] = df['pct_chg_opening'] + df['next_nday_pct_chg']
+     df.loc[df['daily_max'] == True, 'event'] = 0
+     df.loc[df['open_max'] == True, 'event'] = 0
+    
+
+     df.loc[df['name'].str.contains('ST'), 'event'] = 0
+     df.loc[df['name'].str.contains('back'), 'event'] = 0
+    
+     # df = equity_curve_with_long_at_close(df, c_rate=2.5/10000, t_rate=1.0/1000, slidfage=0.01)
+     event_data = df[df['event'] == 2].copy().drop(columns=['trade_date'])
+     del event_data['code']
+     event_data = pd.merge_asof(left=event_data, right=df[['trade_date','code']], left_on=['event_time'], right_on=['trade_date'], direction='backward')
+   
+     event_data.drop_duplicates(subset=['trade_date'], inplace=True, keep='last')
+    
+     df = pd.merge(left=df, right=event_data[['trade_date', 'event_time'] + event_list], on=['trade_date'], how='left', suffixes=('', '_merge' ))
+   
+     for event in event_list:
+         df.loc[:,event] = df[event]
+     df.loc[:,'event_time'] = df['event_time']
+   
+      
+     df = df[df['event']==2]
+     col = ['trade_date', 'event_time', 'code', 'name', 'trade_date_count', 'next_nday_pct_chg'] + extra_cols + event_list
+    
+     return df[col]
+    
+        
+    
+    
+
+if __name__ == '__main__':
+    
+    
+     with Pool(7) as pool:
+         slist = pool. map(event_coll, path)
+
+     
+     all_stock_data = pd. concat(slist, ignore_index=True)
+     all_stock_data.sort_values(['trade_date', 'code'], inplace=True)
+    
+     all_stock_data = all_stock_data[all_stock_data['trade_date'] >= pd.to_datetime(date_start)]
+     all_stock_data = all_stock_data[all_stock_data['trade_date'] <= pd.to_datetime(date_end)]
+     print(all_stock_data)
+     all_stock_data.to_pickle('all_stock_event.pkl')
+     all_stock_data['net_curve_daily'] = all_stock_data['next_nday_pct_chg'].apply(lambda x: x[0]+1)
+     # Deduct the purchase fee
+     all_stock_data['net_curve_daily'] = all_stock_data['net_curve_daily'].apply(lambda x: np.array(x) * (1 - c_rate))
+     # Deduct the selling fee
+     all_stock_data['net_curve_daily'] = all_stock_data['net_curve_daily'].apply(lambda x: x * (1 - c_rate - t_rate))
+
+     all_stock_data['net_final'] = all_stock_data['net_curve_daily']
+     all_stock_data['Each increase and decrease'] = all_stock_data['Final net value'].apply(lambda x: x - 1)
+    
+     all_stock_data['Each increase and decrease'] = all_stock_data['Final net value'].apply(lambda x: x - 1)
+     results = pd. DataFrame()
+
+     results.loc[0, 'Number of profit'] = all_stock_data[all_stock_data['Rise and fall of each transaction'] > 0].shape[0]
+     # Number of losses
+     results.loc[0, 'Number of losses'] = all_stock_data[all_stock_data['Each increase and decrease'] <= 0].shape[0]
+     # average profit and loss per transaction
+     results.loc[0, 'Average profit and loss per transaction'] = num_to_pct(all_stock_data['Price of each transaction'].mean())
+     # single maximum profit
+     results.loc[0, 'win rate'] = num_to_pct(results.loc[0, 'number of profits'] / all_stock_data.shape[0])
+     results.loc[0, 'Profit-loss ratio'] = round(
+         all_stock_data[all_stock_data['Each increase and decrease'] > 0]['Each increase and decrease'].mean() / all_stock_data[all_stock_data['Each increase and decrease'] <= 0]['Each increase and decrease drop'].mean() * -1, 2)
+    
+       #Save the result of a single operation
+    
+    
+     all_stock_data.loc[all_stock_data['final equity']<0.98,'final equity']=0.98
+     all_stock_data['Each increase and decrease'] = all_stock_data['Final net value'].apply(lambda x: x - 1)
+     results.loc[0, 'Forced stop loss profit and loss ratio'] = round(
+         all_stock_data[all_stock_data['Each increase and decrease'] > 0]['Each increase and decrease'].mean() / all_stock_data[all_stock_data['Each increase and decrease'] <= 0]['Each increase and decrease drop'].mean() * -1, 2)
+    
+     all_stock_data = all_stock_data[all_stock_data['event'] == 2]
+
+     uni_res = all_stock_data[['trade_date','code','name','final net value']].rename(columns={'trade_date':'trading day','code':'candidate code','name' :'candidate name'})
+    
+     uni_res.to_pickle('uni_res.pkl')
+    
+     if stk_num_limit:
+         # There can be many, many sorting methods: even all stock selection strategies can be used as the sorting method here.
+         all_stock_data['factor_rank'] = all_stock_data.groupby('trade_date')['rank_factor'].rank(method='first', ascending=True)
+         all_stock_data = all_stock_data[all_stock_data['factor_rank'] <4]
+         del all_stock_data['factor_rank']
+        
+        
+     all_stock_data['code'] += ' '
+     group = all_stock_data. groupby('trade_date')
+     day_event_df = pd. DataFrame()
+     day_event_df.loc[:,'candidate num'] = group['code'].size()
+     day_event_df.loc[:,'candidate code'] = group['code'].sum()
+     day_event_df.loc[:,'candidate code'] = group['name'].sum()
+     day_event_df['net_curve_daily'] = group['next_nday_pct_chg'].apply(cal_today_stock_cap_line, hold_period=1)
+     # Deduct the purchase fee
+     day_event_df['net_curve_daily'] = day_event_df['net_curve_daily'].apply(lambda x: np.array(x) * (1 - c_rate))
+     # Deduct the selling fee
+     day_event_df['net_curve_daily'] = day_event_df['net_curve_daily'].apply(lambda x: list(x[:-1]) + [x[-1] * (1 - c_rate - t_rate)])
+     day_event_df['final net value'] = day_event_df['net_curve_daily'].apply(lambda x: x[0])
+
+    
+     day_event_df = day_event_df. drop(columns=['net_curve_daily'])
+    
+     print(day_event_df)
+     day_event_df['Each increase and decrease'] = day_event_df['Final net value'].apply(lambda x: x - 1)
+     results = pd. DataFrame()
+     results.loc[1, 'Number of times of profit'] = day_event_df[day_event_df['Each increase and decrease'] > 0].shape[0]
+     # Number of losses
+     results.loc[1, 'Number of losses'] = day_event_df[day_event_df['Each increase and decrease'] <= 0].shape[0]
+     # average profit and loss per transaction
+     results.loc[1, 'average profit and loss per transaction'] = num_to_pct(day_event_df['per transaction'].mean())
+     # single maximum profit
+     results.loc[1, 'win rate'] = num_to_pct(results.loc[0, 'number of profits'] / day_event_df.shape[0])
+
+     results.loc[1, 'Profit-loss ratio'] = round(
+         day_event_df[day_event_df['Each increase or decrease'] > 0]['Each increase or decrease'].mean() / day_event_df[day_event_df['Each increase or decrease'] <= 0]['Each increase or decrease drop'].mean() * -1, 2)
+
+     day_event_df.loc[day_event_df['final net value']<0.98,'final net value']=0.98
+     day_event_df['Each increase and decrease'] = day_event_df['Final net value'].apply(lambda x: x - 1)
+     results.loc[1, 'Compulsory stop loss profit and loss ratio'] = round(
+         day_event_df[day_event_df['Each increase or decrease'] > 0]['Each increase or decrease'].mean() / day_event_df[day_event_df['Each increase or decrease'] <= 0]['Each increase or decrease drop'].mean() * -1, 2)
+
+     day_event_df.drop(columns=['Each increase or decrease']).to_pickle('group_res.pkl')
+
+print('time-consuming:', datetime.now() - start_time)
