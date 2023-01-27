@@ -89,13 +89,15 @@ def get_avg_cost(data,short = 7, long = 11, peri = 9):
     data.loc[:,'avg_cost']=get_dma(x.fillna(0).values,a.values)
     data.loc[:,'avg_dif'] = (locals().get('EMA{}'.format(short)) -locals().get('EMA{}'.format(long)))*100/locals().get('EMA{}'.format(long))
     data.loc[:,'avg_dea'] = data['avg_dif'].ewm(alpha=2 / (peri+1), adjust=False).mean()
-    
+    #DK rigion
+    #D = data[data['avg_dif']>=data['avg_dea']]
+    #k = data[data['avg_dif']<data['avg_dea']]
     return data
     
 
 
     
-    return data
+    
 
 Calc EMA BBI LINE 
 def embbi(data,malist=[2,3,5,8,13,21]):
