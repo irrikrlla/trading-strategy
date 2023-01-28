@@ -122,7 +122,27 @@ def cal_rank_factor(df: pd. DataFrame, extra_cols: list):
 
      return df, extra_cols
 
+def cal_today_stock_cap_line(data, hold_period):
+    """
+    calc capitals curve
+    :param data: DataFrame
+    :param hold_period: maxs days you wanna hold a stock
+    :return:
+    """
+    # pct_chg DF->array
+    array = np.array(data.tolist())
+    # get holding days
+    future_days = len(array[0])
+    hold_period = min(hold_period, future_days)
+    
+    array = array[:, :hold_period]  # all rows , columns to hold_period
+    # calc capital curves of every stock with holding period
+    array = array + 1
+    array = np.cumprod(array, axis=1)
+    # calc over all curve
+    array = array.mean(axis=0)
 
+    return list(array)
 
 
 def get_real_singal(df):
@@ -130,7 +150,8 @@ def get_real_singal(df):
             #2.Limited trading amount 
      cond1 = ((df['amount']>= 8e8)&
               (df['adj_close']>=1.05*df['adj_open'])&
-              (df['adj_close']<df['up_limit'])&
+              (df['close']<df['up_limit'])&
+              (df['open']<df['up_limit'])&
               (df['price_percentage']<0.5)&
               (df['volume'] > df['volume_ma_50']))
             
@@ -254,12 +275,10 @@ def event_coll(arg):
      # df['pct_chg_opening'] = df['pct_chg_opening'].apply(lambda x: [x])
      # df['next_nday_pct_chg'] = df['next_nday_pct_chg'].apply(lambda x: x[1:])
      # df['next_nday_pct_chg'] = df['pct_chg_opening'] + df['next_nday_pct_chg']
-     df.loc[df['daily_max'] == True, 'event'] = 0
-     df.loc[df['open_max'] == True, 'event'] = 0
     
 
      df.loc[df['name'].str.contains('ST'), 'event'] = 0
-     df.loc[df['name'].str.contains('back'), 'event'] = 0
+     df.loc[df['name'].str.contains('退'), 'event'] = 0
     
      # df = equity_curve_with_long_at_close(df, c_rate=2.5/10000, t_rate=1.0/1000, slidfage=0.01)
      event_data = df[df['event'] == 2].copy().drop(columns=['trade_date'])
@@ -305,28 +324,20 @@ if __name__ == '__main__':
      all_stock_data['net_curve_daily'] = all_stock_data['net_curve_daily'].apply(lambda x: x * (1 - c_rate - t_rate))
 
      all_stock_data['net_final'] = all_stock_data['net_curve_daily']
-     all_stock_data['Each increase and decrease'] = all_stock_data['Final net value'].apply(lambda x: x - 1)
+     all_stock_data['Each increase and decrease'] = all_stock_data['net_final'].apply(lambda x: x - 1)
     
-     all_stock_data['Each increase and decrease'] = all_stock_data['Final net value'].apply(lambda x: x - 1)
+     
      results = pd. DataFrame()
 
-     results.loc[0, 'Number of profit'] = all_stock_data[all_stock_data['Rise and fall of each transaction'] > 0].shape[0]
+     results.loc[0, 'Number of profit'] = all_stock_data[all_stock_data['Each increase and decrease'] > 0].shape[0]
      # Number of losses
      results.loc[0, 'Number of losses'] = all_stock_data[all_stock_data['Each increase and decrease'] <= 0].shape[0]
      # average profit and loss per transaction
-     results.loc[0, 'Average profit and loss per transaction'] = num_to_pct(all_stock_data['Price of each transaction'].mean())
+     results.loc[0, 'Average profit and loss per transaction'] = num_to_pct(all_stock_data['Each increase and decrease'].mean())
      # single maximum profit
-     results.loc[0, 'win rate'] = num_to_pct(results.loc[0, 'number of profits'] / all_stock_data.shape[0])
+     results.loc[0, 'win rate'] = num_to_pct(results.loc[0, 'Number of profit'] / all_stock_data.shape[0])
      results.loc[0, 'Profit-loss ratio'] = round(
-         all_stock_data[all_stock_data['Each increase and decrease'] > 0]['Each increase and decrease'].mean() / all_stock_data[all_stock_data['Each increase and decrease'] <= 0]['Each increase and decrease drop'].mean() * -1, 2)
-    
-       #Save the result of a single operation
-    
-    
-     all_stock_data.loc[all_stock_data['final equity']<0.98,'final equity']=0.98
-     all_stock_data['Each increase and decrease'] = all_stock_data['Final net value'].apply(lambda x: x - 1)
-     results.loc[0, 'Forced stop loss profit and loss ratio'] = round(
-         all_stock_data[all_stock_data['Each increase and decrease'] > 0]['Each increase and decrease'].mean() / all_stock_data[all_stock_data['Each increase and decrease'] <= 0]['Each increase and decrease drop'].mean() * -1, 2)
+         all_stock_data[all_stock_data['Each increase and decrease'] > 0]['Each increase and decrease'].mean() / all_stock_data[all_stock_data['Each increase and decrease'] <= 0]['Each increase and decrease'].mean() * -1, 2)
     
      all_stock_data = all_stock_data[all_stock_data['event'] == 2]
 
@@ -352,30 +363,32 @@ if __name__ == '__main__':
      day_event_df['net_curve_daily'] = day_event_df['net_curve_daily'].apply(lambda x: np.array(x) * (1 - c_rate))
      # Deduct the selling fee
      day_event_df['net_curve_daily'] = day_event_df['net_curve_daily'].apply(lambda x: list(x[:-1]) + [x[-1] * (1 - c_rate - t_rate)])
-     day_event_df['final net value'] = day_event_df['net_curve_daily'].apply(lambda x: x[0])
+     day_event_df['net_final'] = day_event_df['net_curve_daily'].apply(lambda x: x[0])
 
     
      day_event_df = day_event_df. drop(columns=['net_curve_daily'])
     
      print(day_event_df)
-     day_event_df['Each increase and decrease'] = day_event_df['Final net value'].apply(lambda x: x - 1)
-     results = pd. DataFrame()
-     results.loc[1, 'Number of times of profit'] = day_event_df[day_event_df['Each increase and decrease'] > 0].shape[0]
+     day_event_df['Each increase and decrease'] = day_event_df['net_final'].apply(lambda x: x - 1)
+     
+     results.loc[1, 'Number of profit'] = day_event_df[day_event_df['Each increase and decrease'] > 0].shape[0]
      # Number of losses
      results.loc[1, 'Number of losses'] = day_event_df[day_event_df['Each increase and decrease'] <= 0].shape[0]
      # average profit and loss per transaction
-     results.loc[1, 'average profit and loss per transaction'] = num_to_pct(day_event_df['per transaction'].mean())
+     results.loc[1, 'Average profit and loss per transaction'] = num_to_pct(day_event_df['Each increase and decrease'].mean())
      # single maximum profit
-     results.loc[1, 'win rate'] = num_to_pct(results.loc[0, 'number of profits'] / day_event_df.shape[0])
-
+     results.loc[1, 'win rate'] = num_to_pct(results.loc[1, 'Number of profit'] / day_event_df.shape[0])
      results.loc[1, 'Profit-loss ratio'] = round(
-         day_event_df[day_event_df['Each increase or decrease'] > 0]['Each increase or decrease'].mean() / day_event_df[day_event_df['Each increase or decrease'] <= 0]['Each increase or decrease drop'].mean() * -1, 2)
-
-     day_event_df.loc[day_event_df['final net value']<0.98,'final net value']=0.98
-     day_event_df['Each increase and decrease'] = day_event_df['Final net value'].apply(lambda x: x - 1)
-     results.loc[1, 'Compulsory stop loss profit and loss ratio'] = round(
-         day_event_df[day_event_df['Each increase or decrease'] > 0]['Each increase or decrease'].mean() / day_event_df[day_event_df['Each increase or decrease'] <= 0]['Each increase or decrease drop'].mean() * -1, 2)
-
+         day_event_df[day_event_df['Each increase and decrease'] > 0]['Each increase and decrease'].mean() / day_event_df[day_event_df['Each increase and decrease'] <= 0]['Each increase and decrease'].mean() * -1, 2)
+    
+       #Save the result of a single operation
+    
+    
+     day_event_df.loc[day_event_df['net_final']<0.98,'net_final']=0.98
+     day_event_df['Each increase and decrease'] = day_event_df['net_final'].apply(lambda x: x - 1)
+     results.loc[1, 'Forced stop loss profit-loss ratio'] = round(
+         day_event_df[day_event_df['Each increase and decrease'] > 0]['Each increase and decrease'].mean() / day_event_df[day_event_df['Each increase and decrease'] <= 0]['Each increase and decrease'].mean() * -1, 2)
+    
      day_event_df.drop(columns=['Each increase or decrease']).to_pickle('group_res.pkl')
 
-print('time-consuming:', datetime.now() - start_time)
+     print('time-consuming:', datetime.now() - start_time)
